@@ -22,7 +22,7 @@ import Data.List (groupBy)
 --
 -- YX implements 'Num'. Integers are converted to their diagonal equivalent
 -- (for example @2@ becomes @YX 2 2@).
-data YX = YX { x :: !Int, y :: !Int } deriving (Eq, Ord, Show)
+data YX = YX { y :: !Int, x :: !Int } deriving (Eq, Ord, Show)
 
 lift1 :: (Int -> Int) -> YX -> YX
 lift1 f (YX y1 x1) = YX (f y1) (f x1)
@@ -57,12 +57,15 @@ left = YX 0 (-1)
 right = YX 0 1
 down = YX 1 0
 
--- | Ordered steps arrays.
-steps4, steps8 :: [YX]
+-- | Ordered array of the 4 base steps.
+steps4 :: [YX]
 steps4 = [up, left, right, down]
+
+-- | Ordered array of the 8 steps (4 base and 4 diagonal).
+steps8 :: [YX]
 steps8 = [up + left, up, up + right, left, right, down + left, down, down + right]
 
--- Parse newline delimited bytestring into an array.
+-- | Parse newline delimited bytestring into an array.
 byteStringToArray :: (IArray a e) => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
 byteStringToArray f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
   shape [] (YX y x) = Right (YX y (max x 0))
