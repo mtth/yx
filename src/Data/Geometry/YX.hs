@@ -5,7 +5,7 @@
 -- YX rather than XY since layout is row major (first row sorts before the
 -- second, etc.).
 module Data.Geometry.YX ( YX(..)
-                        , rows
+                        , box, rowRange
                         , up, left, right, down
                         , steps4, steps8
                         , byteStringToArray, arrayToByteString ) where
@@ -14,6 +14,7 @@ import Data.Array.IArray (IArray)
 import qualified Data.Array.IArray as Array
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+import Data.Foldable (foldl')
 import Data.Ix (Ix)
 import qualified Data.Ix as Ix
 import Data.List (groupBy)
@@ -46,9 +47,15 @@ instance Ix YX where
   inRange (YX yl xl, YX yu xu) (YX y x) =
     Ix.inRange (yl, yu) y && Ix.inRange (xl, xu) x
 
+-- | The smallest rectangle containing the input coordinates.
+box :: Foldable f => f YX -> Maybe (YX, YX)
+box = foldl' go Nothing where
+  go Nothing yx = Just (yx, yx)
+  go (Just (tl, br)) yx = Just (lift2 min tl yx, lift2 max br yx)
+
 -- | All coordinates, grouped by row.
-rows :: (YX, YX) -> [[YX]]
-rows = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) . Ix.range
+rowRange :: (YX, YX) -> [[YX]]
+rowRange = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) . Ix.range
 
 -- | Basic steps.
 up, left, right, down :: YX
@@ -84,4 +91,4 @@ byteStringToArray f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
 -- | Reverse of `byteStringToArray`
 arrayToByteString :: (IArray a e) => (e -> Char) -> a YX e -> ByteString
 arrayToByteString f arr = BS.intercalate "\n" lines where
-  lines = fmap (BS.pack . fmap (f . (arr Array.!))) . rows . Array.bounds $ arr
+  lines = fmap (BS.pack . fmap (f . (arr Array.!))) . rowRange . Array.bounds $ arr
