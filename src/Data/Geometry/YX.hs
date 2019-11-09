@@ -1,15 +1,31 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A bitmap-friendly XY coordinate.
+-- | Bitmap-friendly XY coordinates.
 --
--- YX rather than XY since layout is row major (first row sorts before the
--- second, etc.).
-module Data.Geometry.YX ( YX(..)
-                        , box, rowRange
-                        , up, left, right, down
-                        , steps4, steps8
-                        , byteStringToArray, arrayToByteString ) where
+-- We use @YX@ rather than @XY@ to allow natural row major order (first row sorts before the second,
+-- etc.). Note that rows are assumed to go down with @y@.
+module Data.Geometry.YX (
+  -- * Coordinate type
+  YX(..),
+  -- * Basic steps
+  up, left, right, down,
+  steps4, steps8,
+  -- * Box
+  Box, box, boundingBox,
+  topLeft, bottomRight,
+  boxHeight, boxWidth,
+  inBox, boxRange, boxRows, boxIntersection,
+  -- * Transformations
+  Center(..), Direction(..), rotate,
+  Axis(..), mirror,
+  -- * Serialization
+  byteStringToArray, arrayToByteString
+) where
 
+import Prelude hiding (lines)
+
+import Algebra.Lattice (Lattice(..), joinLeq, meetLeq)
 import Data.Array.IArray (IArray)
 import qualified Data.Array.IArray as Array
 import Data.ByteString (ByteString)
@@ -21,8 +37,8 @@ import Data.List (groupBy)
 
 -- | A 2D coordinate.
 --
--- YX implements 'Num'. Integers are converted to their diagonal equivalent
--- (for example @2@ becomes @YX 2 2@).
+-- YX implements 'Num'. Integers are converted to their diagonal equivalent (for example @2@ becomes
+-- @YX 2 2@).
 data YX = YX { y :: !Int, x :: !Int } deriving (Eq, Ord, Show)
 
 lift1 :: (Int -> Int) -> YX -> YX
@@ -41,27 +57,30 @@ instance Num YX where
 
 instance Ix YX where
   range (YX yl xl, YX yu xu) =
-    [ YX y x | y <- Ix.range (yl, yu), x <- Ix.range (xl, xu) ]
-  index (YX yl xl, YX yu xu) (YX y x) =
-    Ix.index (yl, yu) y * Ix.rangeSize (xl, xu) + Ix.index (xl, xu) x
-  inRange (YX yl xl, YX yu xu) (YX y x) =
-    Ix.inRange (yl, yu) y && Ix.inRange (xl, xu) x
+    [ YX y0 x0 | y0 <- Ix.range (yl, yu), x0 <- Ix.range (xl, xu) ]
+  index (YX yl xl, YX yu xu) (YX y0 x0) =
+    Ix.index (yl, yu) y0 * Ix.rangeSize (xl, xu) + Ix.index (xl, xu) x0
+  inRange (YX yl xl, YX yu xu) (YX y0 x0) =
+    Ix.inRange (yl, yu) y0 && Ix.inRange (xl, xu) x0
 
--- | The smallest rectangle containing the input coordinates.
-box :: Foldable f => f YX -> Maybe (YX, YX)
-box = foldl' go Nothing where
-  go Nothing yx = Just (yx, yx)
-  go (Just (tl, br)) yx = Just (lift2 min tl yx, lift2 max br yx)
+instance Lattice YX where
+  YX y0 x0 /\ YX y1 x1 = YX (min y0 y1) (min x0 x1)
+  YX y0 x0 \/ YX y1 x1 = YX (max y0 y1) (max x0 x1)
 
--- | All coordinates, grouped by row.
-rowRange :: (YX, YX) -> [[YX]]
-rowRange = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) . Ix.range
-
--- | Basic steps.
-up, left, right, down :: YX
+-- | Decrement @y@.
+up :: YX
 up = YX (-1) 0
+
+-- | Decrement @x@.
+left :: YX
 left = YX 0 (-1)
+
+-- | Increment @x@.
+right :: YX
 right = YX 0 1
+
+-- | Increment @y@.
+down :: YX
 down = YX 1 0
 
 -- | Ordered array of the 4 base steps.
@@ -72,23 +91,113 @@ steps4 = [up, left, right, down]
 steps8 :: [YX]
 steps8 = [up + left, up, up + right, left, right, down + left, down, down + right]
 
--- | Parse newline delimited bytestring into an array.
+-- | A 2D box.
+--
+-- A box might have zero width or height.
+data Box = Box { _topLeft :: !YX , _bottomRight :: !YX } deriving (Eq, Show)
+
+-- | Constructs a box from its extremities, returning 'Nothing' if the points are not ordered
+-- appropriately.
+box
+  :: YX -- ^ Top-left point.
+  -> YX -- ^ Bottom-right point.
+  -> Maybe Box
+box yx0 yx1 =
+  if joinLeq yx0 yx1 && meetLeq yx0 yx1
+    then Just $ Box yx0 yx1
+    else Nothing
+
+-- | Returns the smallest 'Box' containing all input coordinates.
+boundingBox :: Foldable f => f YX -> Maybe Box
+boundingBox = foldl' go Nothing where
+  go Nothing yx = Just $ Box yx yx
+  go (Just (Box tl br)) yx = Just $ Box (tl /\ yx) (br \/ yx)
+
+-- | Returns the top-left most point of the box (i.e. its lattice meet).
+topLeft :: Box -> YX
+topLeft = _topLeft
+
+-- | Returns the bottom-right most point of the box (i.e. its lattice join).
+bottomRight :: Box -> YX
+bottomRight = _bottomRight
+
+-- | Returns the height of the box, always non-negative.
+boxHeight :: Box -> Int
+boxHeight (Box (YX y0 _) (YX y1 _)) = y1 - y0
+
+-- | Returns the width of the box, always non-negative.
+boxWidth :: Box -> Int
+boxWidth (Box (YX _ x0) (YX _ x1)) = x1 - x0
+
+-- | Returns all coordinates within the box, sorted.
+boxRange :: Box -> [YX]
+boxRange (Box tl br) = Ix.range (tl, br)
+
+-- | Returns whether a given point is within a box.
+inBox :: YX -> Box -> Bool
+inBox yx (Box tl br) = joinLeq yx br && meetLeq tl yx
+
+-- | Returns the box' coordinates, sorted and grouped by row.
+boxRows :: Box -> [[YX]]
+boxRows (Box tl br) = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) $ Ix.range (tl, br)
+
+-- | Intersects two boxes.
+boxIntersection :: Box -> Box -> Maybe Box
+boxIntersection (Box tl0 br0) (Box tl1 br1) =
+  if joinLeq tl0 tl1 && meetLeq br0 br1
+    then Just $ Box (tl0 /\ tl1) (br0 \/ br1)
+    else Nothing
+
+-- | The center of a rotation.
+--
+-- Valid rotations can have either an exact coordinate as center or the top left corner of a
+-- coordinate.
+data Center = Around YX | AroundTopLeftCorner YX deriving (Eq, Ord, Show)
+
+-- | A rotational direction.
+data Direction = Clockwise | CounterClockwise deriving (Bounded, Eq, Enum, Ord, Show)
+
+-- | Rotates a coordinate.
+rotate :: Direction -> Center -> YX -> YX
+rotate dir (Around yx0) yx1 =
+  let YX y2 x2 = yx1 - yx0
+  in case dir of
+    Clockwise -> yx0 + YX x2 (-y2)
+    CounterClockwise -> yx0 + YX (-x2) y2
+rotate dir (AroundTopLeftCorner yx0) yx1 = rotate dir (Around yx0) yx1 + left
+
+-- | Symmetry axis.
+data Axis
+  = AboveRow Int
+  | AtRow Int
+  | LeftOfColumn Int
+  | AtColumn Int
+  deriving (Eq, Ord, Show)
+
+-- | Flips coordinates symmetrically on the given axis.
+mirror :: Axis -> YX -> YX
+mirror (AboveRow y0) yx = mirror (AtRow y0) yx + up
+mirror (AtRow y0) (YX y1 x1) = YX (2 * y0 - y1) x1
+mirror (LeftOfColumn x0) yx = mirror (AtColumn x0) yx + left
+mirror (AtColumn x0) (YX y1 x1) = YX y1 (2 * x0 - x1)
+
+-- | Parses a newline delimited bytestring into an array.
 byteStringToArray :: (IArray a e) => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
 byteStringToArray f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
-  shape [] (YX y x) = Right (YX y (max x 0))
-  shape (row : rows) yx@(YX y x0)
+  shape [] (YX y0 x0) = Right (YX y0 (max x0 0))
+  shape (row : rows) yx@(YX y0 x0)
     | null rows && BS.null row = shape [] yx -- Empty last row.
-    | otherwise = let x = BS.length row - 1
-                  in if x /= x0 && x0 >= 0
-                    then Left $ "bad row lengths: " ++ show x ++ ", " ++ show x0
-                    else shape rows (YX (y + 1) x)
-  materialize bs yx = Array.listArray (0, yx) <$> elems bs
+    | otherwise = let x1 = BS.length row - 1
+                  in if x1 /= x0 && x0 >= 0
+                    then Left $ "bad row lengths: " ++ show x0 ++ ", " ++ show x1
+                    else shape rows (YX (y0 + 1) x1)
+  materialize bs' yx = Array.listArray (0, yx) <$> elems bs'
   elems = sequenceA . fmap parse . filter (/= '\n') . BS.unpack
   parse c = case f c of
     Just e -> Right e
     Nothing -> Left $ "unknown char: " ++ show c
 
--- | Reverse of `byteStringToArray`
+-- | Serializes an array into a bytestring. This function is the reverse of 'byteStringToArray'.
 arrayToByteString :: (IArray a e) => (e -> Char) -> a YX e -> ByteString
 arrayToByteString f arr = BS.intercalate "\n" lines where
-  lines = fmap (BS.pack . fmap (f . (arr Array.!))) . rowRange . Array.bounds $ arr
+  lines = fmap (BS.pack . fmap (f . (arr Array.!))) . boxRows . uncurry Box . Array.bounds $ arr
