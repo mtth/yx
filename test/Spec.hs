@@ -1,7 +1,11 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import Data.Geometry.YX
 
+import Control.Monad.Except (MonadError, runExcept, throwError)
+import Control.Monad.State.Strict (runStateT, put)
 import qualified Data.Array.IArray as Array
 import Data.Char (digitToInt)
 import Data.Either (isLeft)
@@ -32,6 +36,16 @@ main = hspec $ do
       mirror (AboveRow 0) (YX 0 5) `shouldBe` YX (-1) 5
 
   describe "bytestring conversions" $ do
+    it "should support state" $ do
+      let
+        parse yx = \case
+          'x' -> put (Just yx) >> pure True
+          '.' -> pure True
+          '#' -> pure False
+          _ -> throwError "bad char"
+        got = runExcept $ runStateT (byteStringToArrayM parse ".x\n.#\n") Nothing
+        wantArr = Array.listArray (0, 1) [True, True, True, False] :: Array.Array YX Bool
+      got `shouldBe` Right (wantArr, Just (YX 0 1))
     it "should parse a simple square case" $ do
       let
         got = byteStringToArray (Just . digitToInt) "12\n34\n"

@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -12,22 +13,24 @@ module Data.Geometry.YX (
   up, left, right, down,
   steps4, steps8,
   -- * Box
-  Box, box, boundingBox,
+  Box, box, arrayBox, boundingBox,
   topLeft, bottomRight,
   boxHeight, boxWidth,
   inBox, boxRange, boxRows, boxIntersection,
+  boxNeighbors4, boxNeighbors8,
   -- * Transformations
   Center(..), Direction(..), rotate,
   Axis(..), mirror,
   -- * Serialization
-  byteStringToArray, arrayToByteString
+  byteStringToArray, byteStringToArrayM, arrayToByteString
 ) where
 
 import Prelude hiding (lines)
 
 import Algebra.Lattice (Lattice(..), joinLeq, meetLeq)
+import Control.Monad.Except (MonadError, throwError)
 import Data.Array.IArray (IArray)
-import qualified Data.Array.IArray as Array
+import qualified Data.Array.IArray as IArray
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import Data.Foldable (foldl')
@@ -107,6 +110,10 @@ box yx0 yx1 =
     then Just $ Box yx0 yx1
     else Nothing
 
+-- | Returns the box corresponding to an array, or 'Nothing' if the array is empty.
+arrayBox :: IArray a e => a YX e -> Maybe Box
+arrayBox = uncurry box . IArray.bounds
+
 -- | Returns the smallest 'Box' containing all input coordinates.
 boundingBox :: Foldable f => f YX -> Maybe Box
 boundingBox = foldl' go Nothing where
@@ -140,6 +147,21 @@ inBox yx (Box tl br) = joinLeq yx br && meetLeq tl yx
 -- | Returns the box' coordinates, sorted and grouped by row.
 boxRows :: Box -> [[YX]]
 boxRows (Box tl br) = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) $ Ix.range (tl, br)
+
+boxNeighbors :: [YX] -> Box -> YX -> [YX]
+boxNeighbors steps b yx = filter (`inBox` b) $ fmap (+ yx) steps
+
+-- | Returns 4 neighbors of YX filtered to members of the box.
+--
+-- @since 0.0.4.0
+boxNeighbors4 :: Box -> YX -> [YX]
+boxNeighbors4 = boxNeighbors steps4
+
+-- | Returns 8 neighbors of YX filtered to members of the box.
+--
+-- @since 0.0.4.0
+boxNeighbors8 :: Box -> YX -> [YX]
+boxNeighbors8 = boxNeighbors steps8
 
 -- | Intersects two boxes.
 boxIntersection :: Box -> Box -> Maybe Box
@@ -181,23 +203,29 @@ mirror (AtRow y0) (YX y1 x1) = YX (2 * y0 - y1) x1
 mirror (LeftOfColumn x0) yx = mirror (AtColumn x0) yx + left
 mirror (AtColumn x0) (YX y1 x1) = YX y1 (2 * x0 - x1)
 
--- | Parses a newline delimited bytestring into an array.
-byteStringToArray :: (IArray a e) => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
-byteStringToArray f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
-  shape [] (YX y0 x0) = Right (YX y0 (max x0 0))
-  shape (row : rows) yx@(YX y0 x0)
-    | null rows && BS.null row = shape [] yx -- Empty last row.
+-- | Parses a newline delimited bytestring into an array in an effectful way.
+--
+-- @since 0.0.4.0
+byteStringToArrayM :: (IArray a e, MonadError String m) => (YX -> Char -> m e) -> ByteString -> m (a YX e)
+byteStringToArrayM f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
+  shape [] (YX y0 x0) = pure (YX y0 (max x0 0))
+  shape rows@(row : rows') yx@(YX y0 x0)
+    | null $ filter (not . BS.null) rows = shape [] yx -- Empty trailing rows.
     | otherwise = let x1 = BS.length row - 1
                   in if x1 /= x0 && x0 >= 0
-                    then Left $ "bad row lengths: " ++ show x0 ++ ", " ++ show x1
-                    else shape rows (YX (y0 + 1) x1)
-  materialize bs' yx = Array.listArray (0, yx) <$> elems bs'
-  elems = sequenceA . fmap parse . filter (/= '\n') . BS.unpack
-  parse c = case f c of
+                    then throwError $ "bad row lengths: " ++ show x0 ++ ", " ++ show x1
+                    else shape rows' (YX (y0 + 1) x1)
+  materialize bs' yx = let t = (0, yx) in IArray.listArray t <$> elems (Ix.range t) bs'
+  elems yxs bs' = sequenceA $ fmap (uncurry f) $ zip yxs (filter (/= '\n') $ BS.unpack bs')
+
+-- | Parses a newline delimited bytestring into an array.
+byteStringToArray :: (IArray a e) => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
+byteStringToArray f bs = byteStringToArrayM (const toElem) bs where
+  toElem c = case f c of
     Just e -> Right e
     Nothing -> Left $ "unknown char: " ++ show c
 
 -- | Serializes an array into a bytestring. This function is the reverse of 'byteStringToArray'.
 arrayToByteString :: (IArray a e) => (e -> Char) -> a YX e -> ByteString
 arrayToByteString f arr = BS.intercalate "\n" lines where
-  lines = fmap (BS.pack . fmap (f . (arr Array.!))) . boxRows . uncurry Box . Array.bounds $ arr
+  lines = fmap (BS.pack . fmap (f . (arr IArray.!))) . boxRows . uncurry Box . IArray.bounds $ arr
