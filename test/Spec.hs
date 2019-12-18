@@ -19,6 +19,18 @@ main = hspec $ do
       boundingBox [] `shouldBe` Nothing
     it "can be built simple inputs" $ do
       boundingBox [YX 2 1, YX 2 2, YX 1 0] `shouldBe` box (YX 1 0) (YX 2 2)
+    it "returns bounds" $ do
+      let
+        tl = YX 1 0
+        br = YX 2 2
+        Just b = box tl br
+      boxBounds b `shouldBe` (tl, br)
+    it "can be combined" $ do
+      let
+        Just b1 = box 0 1
+        Just b2 = box 1 2
+        Just b3 = box 0 2
+      b1 <> b2 `shouldBe` b3
     it "checks membership" $ do
       let Just b = box (YX 1 0) (YX 2 2)
       YX 1 0 `inBox` b `shouldBe` True

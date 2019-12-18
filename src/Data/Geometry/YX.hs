@@ -14,7 +14,7 @@ module Data.Geometry.YX (
   steps4, steps8,
   -- * Box
   Box, box, arrayBox, boundingBox,
-  topLeft, bottomRight,
+  boxBounds, topLeft, bottomRight,
   boxHeight, boxWidth,
   inBox, boxRange, boxRows, boxIntersection,
   boxNeighbors4, boxNeighbors8,
@@ -94,10 +94,14 @@ steps4 = [up, left, right, down]
 steps8 :: [YX]
 steps8 = [up + left, up, up + right, left, right, down + left, down, down + right]
 
--- | A 2D box.
+-- | A non-empty 2D box.
 --
--- A box might have zero width or height.
+-- A box might have zero width or height but will always contain at least one point.
 data Box = Box { _topLeft :: !YX , _bottomRight :: !YX } deriving (Eq, Show)
+
+-- | @since 0.0.4.1
+instance Semigroup Box where
+  (Box tl1 br1) <> (Box tl2 br2) = Box (tl1 /\ tl2) (br1 \/ br2)
 
 -- | Constructs a box from its extremities, returning 'Nothing' if the points are not ordered
 -- appropriately.
@@ -127,6 +131,12 @@ topLeft = _topLeft
 -- | Returns the bottom-right most point of the box (i.e. its lattice join).
 bottomRight :: Box -> YX
 bottomRight = _bottomRight
+
+-- | Returns the box' bounds, @(topLeft, bottomRight)@.
+--
+-- @since 0.0.4.1
+boxBounds :: Box -> (YX, YX)
+boxBounds (Box tl br) = (tl, br)
 
 -- | Returns the height of the box, always non-negative.
 boxHeight :: Box -> Int
@@ -206,7 +216,9 @@ mirror (AtColumn x0) (YX y1 x1) = YX y1 (2 * x0 - x1)
 -- | Parses a newline delimited bytestring into an array in an effectful way.
 --
 -- @since 0.0.4.0
-byteStringToArrayM :: (IArray a e, MonadError String m) => (YX -> Char -> m e) -> ByteString -> m (a YX e)
+byteStringToArrayM
+  :: (IArray a e, MonadError String m)
+  => (YX -> Char -> m e) -> ByteString -> m (a YX e)
 byteStringToArrayM f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
   shape [] (YX y0 x0) = pure (YX y0 (max x0 0))
   shape rows@(row : rows') yx@(YX y0 x0)
