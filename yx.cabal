@@ -1,5 +1,5 @@
 name:                yx
-version:             0.0.4.0
+version:             0.0.4.1
 synopsis:            Row-major coordinates
 description:         A minimal library for handling 2D coordinates.
 homepage:            https://github.com/mtth/yx
