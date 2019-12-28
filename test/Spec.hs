@@ -37,6 +37,14 @@ main = hspec $ do
       YX 1 2 `inBox` b `shouldBe` True
       YX 1 3 `inBox` b `shouldBe` False
       YX 0 0 `inBox` b `shouldBe` False
+    it "computes depth" $ do
+      let Just b = box (YX 1 0) 4
+      boxDepth b 0 `shouldBe` Nothing
+      boxDepth b (YX 1 0) `shouldBe` Just 0
+      boxDepth b (YX 3 4) `shouldBe` Just 0
+      boxDepth b 3 `shouldBe` Just 1
+      boxDepth b 2 `shouldBe` Just 1
+      boxDepth b (YX 2 0) `shouldBe` Just 0
     it "returns rows" $ do
       let Just b = box (YX 1 0) (YX 2 2)
       boxRows b `shouldBe` [[YX 1 0, YX 1 1, YX 1 2], [YX 2 0, YX 2 1, YX 2 2]]

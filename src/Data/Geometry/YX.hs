@@ -16,7 +16,7 @@ module Data.Geometry.YX (
   Box, box, arrayBox, boundingBox,
   boxBounds, topLeft, bottomRight,
   boxHeight, boxWidth,
-  inBox, boxRange, boxRows, boxIntersection,
+  inBox, boxDepth, boxRange, boxRows, boxIntersection,
   boxNeighbors4, boxNeighbors8,
   -- * Transformations
   Center(..), Direction(..), rotate,
@@ -40,8 +40,6 @@ import Data.List (groupBy)
 
 -- | A 2D coordinate.
 --
--- YX implements 'Num'. Integers are converted to their diagonal equivalent (for example @2@ becomes
--- @YX 2 2@).
 data YX = YX { y :: !Int, x :: !Int } deriving (Eq, Ord, Show)
 
 lift1 :: (Int -> Int) -> YX -> YX
@@ -50,6 +48,7 @@ lift1 f (YX y1 x1) = YX (f y1) (f x1)
 lift2 :: (Int -> Int -> Int) -> YX -> YX -> YX
 lift2 f (YX y1 x1) (YX y2 x2) = YX (f y1 y2) (f x1 x2)
 
+-- | Integers are converted to their diagonal equivalent (for example @2@ becomes @YX 2 2@).
 instance Num YX where
   (+) = lift2 (+)
   (*) = lift2 (*)
@@ -154,6 +153,15 @@ boxRange (Box tl br) = Ix.range (tl, br)
 inBox :: YX -> Box -> Bool
 inBox yx (Box tl br) = joinLeq yx br && meetLeq tl yx
 
+-- | Returns the shortest distance of the point to the box' edge, or 'Nothing' if the point is not
+-- within the box.
+--
+-- @since 0.0.4.2
+boxDepth :: Box -> YX -> Maybe Int
+boxDepth b@(Box (YX y0 x0) (YX y1 x1)) yx@(YX y x) = if yx `inBox` b
+  then Just $ minimum [y - y0, y1 - y, x - x0, x1 - x]
+  else Nothing
+
 -- | Returns the box' coordinates, sorted and grouped by row.
 boxRows :: Box -> [[YX]]
 boxRows (Box tl br) = groupBy (\(YX y1 _) (YX y2 _) -> y1 == y2) $ Ix.range (tl, br)
@@ -231,13 +239,13 @@ byteStringToArrayM f bs = shape (BS.split '\n' bs) (-1) >>= materialize bs where
   elems yxs bs' = sequenceA $ fmap (uncurry f) $ zip yxs (filter (/= '\n') $ BS.unpack bs')
 
 -- | Parses a newline delimited bytestring into an array.
-byteStringToArray :: (IArray a e) => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
+byteStringToArray :: IArray a e => (Char -> Maybe e) -> ByteString -> Either String (a YX e)
 byteStringToArray f bs = byteStringToArrayM (const toElem) bs where
   toElem c = case f c of
     Just e -> Right e
     Nothing -> Left $ "unknown char: " ++ show c
 
 -- | Serializes an array into a bytestring. This function is the reverse of 'byteStringToArray'.
-arrayToByteString :: (IArray a e) => (e -> Char) -> a YX e -> ByteString
+arrayToByteString :: IArray a e => (e -> Char) -> a YX e -> ByteString
 arrayToByteString f arr = BS.intercalate "\n" lines where
   lines = fmap (BS.pack . fmap (f . (arr IArray.!))) . boxRows . uncurry Box . IArray.bounds $ arr

@@ -1,5 +1,5 @@
 name:                yx
-version:             0.0.4.1
+version:             0.0.4.2
 synopsis:            Row-major coordinates
 description:         A minimal library for handling 2D coordinates.
 homepage:            https://github.com/mtth/yx
@@ -22,7 +22,7 @@ library
                      , lattices >= 2.0
                      , mtl >= 2.2
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Wno-name-shadowing
 
 test-suite yx-test
   type: exitcode-stdio-1.0
