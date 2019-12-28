@@ -39,8 +39,11 @@ import qualified Data.Ix as Ix
 import Data.List (groupBy)
 
 -- | A 2D coordinate.
---
-data YX = YX { y :: !Int, x :: !Int } deriving (Eq, Ord, Show)
+data YX
+  = YX
+    { y :: {-# UNPACK #-} !Int -- ^ Y-axis coordinate.
+    , x :: {-# UNPACK #-} !Int -- ^ X-axis coordinate.
+    } deriving (Eq, Ord, Show)
 
 lift1 :: (Int -> Int) -> YX -> YX
 lift1 f (YX y1 x1) = YX (f y1) (f x1)
